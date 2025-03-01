@@ -11,6 +11,7 @@ export class GameObject {
     this.lastSent = 0;
     this.ownerId = null;
     this.worldId = app.instanceId;
+    this.localUserId = world.getPlayer().id;
     
     // State stored as a Map for advanced state handling.
     this.state = new Map();
@@ -63,16 +64,24 @@ export class GameObject {
 
     const updateListener = (delta) => this.handleEvent('update', delta);
     app.on('update', updateListener);
-    this._registeredCallbacks.push({ target: world, event: 'update', handler: updateListener });
+    this._registeredCallbacks.push({ target: app, event: 'update', handler: updateListener });
 
     const fixedUpdateListener = (delta) => this.handleEvent('fixedUpdate', delta);
     app.on('fixedUpdate', fixedUpdateListener);
-    this._registeredCallbacks.push({ target: world, event: 'fixedUpdate', handler: fixedUpdateListener });
+    this._registeredCallbacks.push({ target: app, event: 'fixedUpdate', handler: fixedUpdateListener });
+
+    const userJoinsWorld = (player) => this.handleEvent('enter', player);
+    world.on('enter', userJoinsWorld);
+    this._registeredCallbacks.push({ target: world, event: 'enter', handler: userJoinsWorld});
 
     if (world.isClient) {
       const updateStateListener = (s) => this.updateState(s);
       app.on('updateState', updateStateListener);
       this._registeredCallbacks.push({ target: app, event: 'updateState', handler: updateStateListener });
+
+      const updateStatePlayerListener = (d) => this.updateStatePlayer(d);
+      app.on('updateStatePlayer', updateStatePlayerListener);
+      this._registeredCallbacks.push({ target: app, event: 'updateStatePlayer', handler: updateStatePlayerListener });
     }
   }
 
@@ -157,6 +166,13 @@ export class GameObject {
     }
   }
 
+  updateStatePlayer(data) {
+    if (world.isServer) { return; }
+    if (data.id === localUserId) {
+      this.state = data.state;
+    }
+  }
+
   // Ownership management with an ownership-changed hook.
   takeOwnershipServer(newOwnerId) {
     const oldOwner = this.ownerId;
@@ -199,6 +215,10 @@ export class GameObject {
     } catch (err) {
       console.error('Error in objectMoveClient:', err);
     }
+  }
+
+  enterServer(player) {
+    app.send('updateStatePlayer', { id: player.id, state: this.state});
   }
 
   // Fixed update events (server)
