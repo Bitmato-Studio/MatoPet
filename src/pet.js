@@ -60,6 +60,7 @@ export class FollowPet extends GameObject {
         this.initState(app.state);
       }
 
+      this.addEventListener('updateStatePlayer', (state) => this.initState(state));
       this.addEventListener('updateState', (state) => this.initState(state));
       this.addEventListener('fixedUpdate', (delta) => this.updatePetClient(delta));
     }
