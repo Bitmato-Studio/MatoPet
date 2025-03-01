@@ -19,9 +19,9 @@ const STUCK_LIMIT = 3;
 // FollowPet Class Definition
 // -------------------------------------------------------------------
 export class FollowPet extends GameObject {
-  constructor(sendRate = SEND_RATE, lerpConfig = {}) {
+  constructor(sendRate = SEND_RATE) {
     // No root passed; GameObject creates its own root (a WorldObject) downstream.
-    super(sendRate, lerpConfig, false);
+    super(sendRate, false);
 
     // Read configuration values from props.
     this.followSpeed = Number.parseFloat(props.follow_speed) || 2.2;
@@ -33,6 +33,10 @@ export class FollowPet extends GameObject {
     this.sitEmote = props.emote_sitting?.url;
     this.targetId = props.target; // (if used)
 
+    if (!this.targetId && !this.ownerId) {
+      this.emote = this.sitEmote;
+    }
+
     // Variables for interaction UI and adoption actions.
     this.action = null;
     this.worldUI = null;
@@ -41,6 +45,7 @@ export class FollowPet extends GameObject {
     this.lastCheckTime = 0;
     this.stuckCounter = 0;
     this.lastPosition = new Vector3().copy(this.root.position);
+    
 
     // Temporary vectors for calculations.
     this._direction = new Vector3();
@@ -53,7 +58,7 @@ export class FollowPet extends GameObject {
 
       this.addEventListener('fixedUpdate', (delta) => this.fixedUpdateServer(delta));
       this.addEventListener('requestAdoption', (playerId) => this.adoptionRequest(playerId));
-      this.addEventListener('leave', (e) => this.playerLeftLobby(e));
+      this.addEventListener('leave', (e) => this.playerLeftLobby(e), false);
       this.addEventListener('setPlayer', (player) => this.setPlayer(player));
     } else {
       if (app.state.ready) {
@@ -62,7 +67,10 @@ export class FollowPet extends GameObject {
 
       this.addEventListener('updateStatePlayer', (state) => this.initState(state));
       this.addEventListener('updateState', (state) => this.initState(state));
+      this.addEventListener('leave', (event) => this.playerLeftLobby(e), false);
       this.addEventListener('fixedUpdate', (delta) => this.updatePetClient(delta));
+      this.addEventListener('objectMove', (event) => this.objectMoveEvent(event));
+      this.onOwnershipChanged = this.changeOwnership;
     }
 
     this.sendState();
@@ -71,11 +79,35 @@ export class FollowPet extends GameObject {
   // --- Interaction UI ---
   interactWithPet() { }
 
+  changeOwnership(oldOwner, newOwner) {
+    if (!newOwner) {
+      this.root.avatar?.setEmote(this.sitEmote);
+    }
+  }
+
   playerLeftLobby(e) {
+    if (world.isClient) {
+      this.emote = this.sitEmote;
+      this.root.avatar.setEmote(this.sitEmote);
+    } 
+    console.log('player left lobby');
     if (e.player.networkId === this.ownerId) {
       ownerId = null;
+      this.emote = this.sitEmote;
+      this.setState('emote', this.sitEmote);
       this.take(null);
     }
+  }
+
+  objectMoveEvent(event) {
+    if (world.isServer && !this.ownerId) {
+      this.emote = this.sitEmote;
+      this.setState('emote', this.sitEmote);
+      return;
+    }
+
+    if (this.ownerId === world.networkId) { return; }
+    this.root.avatar?.setEmote(event.emote);
   }
 
   setPlayer(player) {
@@ -102,9 +134,13 @@ export class FollowPet extends GameObject {
   }
 
   initState(state) {
+    if (!(state instanceof Map)) {
+      state = new Map(Object.entries(state));
+    }
     // Use full property names from state.
     this.root.position.fromArray(state.get("position"));
     this.root.quaternion.fromArray(state.get("quaternion"));
+    this.ownerId = state.get('ownerId') || null;
     // Update global props if needed.
     props = state.get("props");
 
@@ -149,9 +185,7 @@ export class FollowPet extends GameObject {
   updatePetClient(delta) {
     // If no one owns the pet, have it sit and let GameObject handle interpolation.
     if (!this.ownerId) {
-      if (this.root.avatar && typeof this.root.avatar.setEmote === 'function') {
-        this.root.avatar.setEmote(this.sitEmote);
-      }
+      this.root.avatar.setEmote(this.sitEmote);
       super.updateClient(delta);
       return;
     }
@@ -161,6 +195,7 @@ export class FollowPet extends GameObject {
       if (app.sleeping) {
         if (this.root.avatar && typeof this.root.avatar.setEmote === 'function') {
           this.root.avatar.setEmote(this.idleEmote);
+          this.setState('emote', this.idleEmote);
         }
         return;
       }
@@ -180,6 +215,7 @@ export class FollowPet extends GameObject {
         atTarget = true;
         if (this.root.avatar && typeof this.root.avatar.setEmote === 'function') {
           this.root.avatar.setEmote(this.idleEmote);
+          this.setState('emote', this.idleEmote);
         }
         this._direction.set(0, 0, 0);
       } else if (distanceToTarget >= MAX_PLAYER_DISTANCE) {
@@ -262,6 +298,7 @@ export class FollowPet extends GameObject {
           this.root.quaternion.slerp(blendedQuat, 0.08);
           if (this.root.avatar && typeof this.root.avatar.setEmote === 'function') {
             this.root.avatar.setEmote(this.walkEmote);
+            this.setState('emote', this.walkEmote);
           }
         }
       }
@@ -296,11 +333,4 @@ export class FollowPet extends GameObject {
     }
   }
 
-  // --- Server-side Update ---
-  updatePetServer(delta) {
-    if (!this.ownerId) {
-      this.lastSent += delta;
-      if (lastSend < this.sendRate) {}
-    }
-  }
 }

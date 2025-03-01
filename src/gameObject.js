@@ -3,7 +3,7 @@ import { WorldObject } from './worldObject'
 export const SEND_RATE = 1 / 8;
 
 export class GameObject {
-  constructor(sendRate = SEND_RATE, lerpConfig = {}, runSendState=true) {
+  constructor(sendRate = SEND_RATE, runSendState=true) {
     this.sendRate = sendRate;
     this.root = new WorldObject();
 
@@ -11,7 +11,8 @@ export class GameObject {
     this.lastSent = 0;
     this.ownerId = null;
     this.worldId = app.instanceId;
-    this.localUserId = world.getPlayer().id;
+    this.localUserId = world.getPlayer()?.id;
+    this.emote = null;
     
     // State stored as a Map for advanced state handling.
     this.state = new Map();
@@ -30,7 +31,6 @@ export class GameObject {
     this.onOwnershipChanged = (oldOwner, newOwner) => {};
 
     // Allow custom lerp objects or easing via lerpConfig.
-    this.lerpConfig = lerpConfig;
     this.setupLerps();
     this.setupEvents();
 
@@ -87,8 +87,8 @@ export class GameObject {
 
   setupLerps() {
     // Use custom interpolators if provided in lerpConfig; otherwise, default.
-    this.npos = this.lerpConfig.lerpVector || new LerpVector3(app.position, this.sendRate);
-    this.nqua = this.lerpConfig.lerpQuaternion || new LerpQuaternion(app.quaternion, this.sendRate);
+    this.npos = new LerpVector3(app.position, this.sendRate);
+    this.nqua = new LerpQuaternion(app.quaternion, this.sendRate);
   }
 
   handleEvent(type, data) {
@@ -177,6 +177,7 @@ export class GameObject {
   takeOwnershipServer(newOwnerId) {
     const oldOwner = this.ownerId;
     this.ownerId = newOwnerId;
+    this.setState('ownerId', this.ownerId);
     app.send('takeOwnership', newOwnerId);
     this.onOwnershipChanged(oldOwner, newOwnerId);
   }
@@ -211,6 +212,7 @@ export class GameObject {
       if (this.ownerId !== world.networkId) {
         this.npos.pushArray(event.position);
         this.nqua.pushArray(event.quaternion);
+        this.emote = event.emote;
       }
     } catch (err) {
       console.error('Error in objectMoveClient:', err);
@@ -237,7 +239,6 @@ export class GameObject {
 
   // Fixed update events (client) – can be overridden if needed.
   fixedUpdateClient(delta) {
-    // Default empty implementation.
   }
 
   // Regular update events for client interpolation.
@@ -246,6 +247,19 @@ export class GameObject {
     if (this.ownerId !== world.networkId) {
       this.npos.update(delta);
       this.nqua.update(delta);
+    } else {
+      this.lastSent += delta;
+      if (this.sendRate <= 0.0 || this.lastSent < this.sendRate) { return; }
+
+      this.setState('position', this.root.position.toArray());
+      this.setState('quaternion', this.root.quaternion.toArray());
+    
+      app.send('objectMove', {
+        position: this.state.get('position'),
+        quaternion: this.state.get('quaternion'),
+        emote: this.state.get('emote') || null,
+      });
+      this.lastSent = 0;
     }
     this.afterUpdateClient(delta);
   } 
@@ -261,7 +275,7 @@ export class GameObject {
     app.send('objectMove', {
       position: this.state.get('position'),
       quaternion: this.state.get('quaternion'),
-      state: this.state
+      emote: this.state.get('emote') || null,
     });
     this.lastSent = 0;
   }
